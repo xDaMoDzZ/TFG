@@ -14,6 +14,7 @@ def firewall_menu():
             "4": "Listar Reglas del Firewall",
             "5": "Añadir Regla (Permitir Puerto) (Requiere Privilegios)",
             "6": "Eliminar Regla (Permitir Puerto) (Requiere Privilegios)",
+            "7": "Mostrar Información de Regla por Nombre", # Nueva opción
             "9": "Generar Log de Firewall",
             "0": "Volver al Menú Principal"
         }
@@ -33,6 +34,8 @@ def firewall_menu():
             add_allow_port_rule()
         elif choice == '6':
             delete_allow_port_rule()
+        elif choice == '7': # Manejo de la nueva opción
+            show_rule_by_name()
         elif choice == '9':
             generate_firewall_log()
         elif choice == '0':
@@ -44,8 +47,32 @@ def firewall_menu():
 def view_firewall_status():
     print_header("Ver Estado del Firewall")
     os_type = get_os_type()
+    output = ""
+    status = 1 # Valor inicial de error
+
     if os_type == 'windows':
         command = "netsh advfirewall show allprofiles state"
+        print_info(f"Ejecutando en Windows: {command}") # Añadir para depuración
+        output, status = execute_command(command)
+        
+        # Depuración: Imprimir el status y output tal cual
+        print_info(f"DEBUG: Status de netsh advfirewall: {status}")
+        print_info(f"DEBUG: Salida de netsh advfirewall:\n{output}")
+
+        if status == 0:
+            # Comprobar si la salida contiene "State               ON" o "State               OFF"
+            # Esto es más robusto que solo confiar en el código de salida
+            if "State               ON" in output or "State               OFF" in output:
+                print_info("Estado del Firewall:")
+                print(output)
+                log_action("Firewall", "View Status", "Estado del firewall listado exitosamente.")
+            else:
+                print_error(f"El comando se ejecutó, pero no se pudo determinar el estado del firewall de la salida: {output}")
+                log_action("Firewall", "View Status", f"Comando exitoso pero salida inesperada: {output}")
+        else:
+            print_error(f"Error al ver estado del firewall (código: {status}): {output}")
+            log_action("Firewall", "View Status", f"Error al ver estado del firewall (código: {status}): {output}")
+
     else: # linux (ufw es común en Debian/Ubuntu, iptables en otros)
         command = "ufw status"
         output, status = execute_command(command, sudo=True)
@@ -54,13 +81,13 @@ def view_firewall_status():
             command = "sudo iptables -L -n -v"
             output, status = execute_command(command, sudo=True)
 
-    if status == 0:
-        print_info("Estado del Firewall:")
-        print(output)
-        log_action("Firewall", "View Status", "Estado del firewall listado exitosamente.")
-    else:
-        print_error(f"Error al ver estado del firewall: {output}")
-        log_action("Firewall", "View Status", f"Error al ver estado del firewall: {output}")
+        if status == 0:
+            print_info("Estado del Firewall:")
+            print(output)
+            log_action("Firewall", "View Status", "Estado del firewall listado exitosamente.")
+        else:
+            print_error(f"Error al ver estado del firewall: {output}")
+            log_action("Firewall", "View Status", f"Error al ver estado del firewall: {output}")
 
 def enable_firewall():
     print_header("Habilitar Firewall")
@@ -196,6 +223,48 @@ def delete_allow_port_rule():
     else:
         print_info("Operación cancelada.")
         log_action("Firewall", "Delete Rule", "Eliminación de regla cancelada.")
+
+def show_rule_by_name():
+    print_header("Mostrar Información de Regla por Nombre")
+    rule_name = get_user_input("Ingrese el nombre de la regla a mostrar")
+    
+    os_type = get_os_type()
+    if os_type == 'windows':
+        command = f'netsh advfirewall firewall show rule name="{rule_name}"'
+    else: # linux
+        # UFW no tiene un comando directo para "mostrar regla por nombre"
+        # La forma más directa es buscarla en la salida de 'ufw status verbose' o 'iptables -S'
+        print_info("En Linux (UFW/iptables), no hay un comando directo para mostrar una regla específica por nombre.")
+        print_info("Se listarán todas las reglas y se buscará la que coincida con el nombre, o se mostrarán todas las reglas detalladas.")
+        print_info("Considere revisar la salida de 'ufw status verbose' o 'sudo iptables -S' para buscar manualmente.")
+        # Como alternativa, podemos intentar listar todas las reglas detalladas y pedir al usuario que la busque.
+        command = "ufw status verbose"
+        output, status = execute_command(command, sudo=True)
+        if status != 0:
+            print_info("UFW no encontrado o no activo. Intentando con iptables...")
+            command = "sudo iptables -S" # Muestra las reglas de iptables en formato que se pueden volver a añadir
+            output, status = execute_command(command, sudo=True)
+    
+    output, status = execute_command(command, sudo=True) # Ejecutar el comando para Windows o el alternativo de Linux
+    
+    if status == 0:
+        if os_type == 'windows':
+            if f"Rule Name: {rule_name}" in output:
+                print_info(f"Información de la regla '{rule_name}':")
+                print(output)
+                log_action("Firewall", "Show Rule by Name", f"Información de la regla '{rule_name}' mostrada exitosamente.")
+            else:
+                print_error(f"No se encontró ninguna regla con el nombre '{rule_name}'.")
+                print(output) # Muestra la salida completa para ayudar a depurar si no se encontró
+                log_action("Firewall", "Show Rule by Name", f"No se encontró la regla '{rule_name}'.")
+        else: # Linux
+            print_info(f"Salida completa de las reglas del firewall (busque '{rule_name}' manualmente):")
+            print(output)
+            log_action("Firewall", "Show Rule by Name", f"Reglas del firewall listadas para buscar '{rule_name}'.")
+    else:
+        print_error(f"Error al mostrar información de la regla: {output}")
+        log_action("Firewall", "Show Rule by Name", f"Error al mostrar información de la regla '{rule_name}': {output}")
+
 
 def generate_firewall_log():
     print_header("Generar Log de Firewall")
