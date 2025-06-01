@@ -1,12 +1,14 @@
 import subprocess
 import sys
-import psutil # Keep psutil as it's a dedicated library for system info
+import os
+import re
+import psutil
+from utils import common
 
 # --- Helper function for command execution (_run_command) ---
 def _run_command(command, check_success=True, capture_output=True, shell=False):
     """
-    Executes a system command and handles its output and errors.
-    (Same helper function as above, duplicated for self-contained files)
+    Ejecuta un comando del sistema y maneja su salida y errores.
     """
     try:
         result = subprocess.run(
@@ -19,43 +21,61 @@ def _run_command(command, check_success=True, capture_output=True, shell=False):
         return result
     except FileNotFoundError:
         cmd_name = command[0] if isinstance(command, list) else command.split()[0]
-        print(f"Error: Command '{cmd_name}' not found. Make sure it's installed and in your PATH.", file=sys.stderr)
+        print(f"Error: Comando '{cmd_name}' no encontrado. Asegúrate de que esté instalado y en tu PATH.", file=sys.stderr)
         if check_success:
             sys.exit(1)
         return None
     except subprocess.CalledProcessError as e:
-        print(f"Error executing command: {e}", file=sys.stderr)
+        print(f"Error al ejecutar comando: {e}", file=sys.stderr)
         print(f"STDOUT: {e.stdout.strip()}", file=sys.stderr)
         print(f"STDERR: {e.stderr.strip()}", file=sys.stderr)
         if check_success:
             sys.exit(1)
         return None
     except Exception as e:
-        print(f"Unexpected error when executing command: {e}", file=sys.stderr)
+        print(f"Error inesperado al ejecutar el comando: {e}", file=sys.stderr)
         if check_success:
             sys.exit(1)
         return None
 
-# --- Resource Functions ---
+def display_monitoring_menu():
+    """Muestra el submenú de monitorización de recursos en Linux."""
+    common.clear_screen()
+    print("--- Gestión y Monitorización de Recursos (Windows) ---")
+    print("1. Ver Uso de CPU")
+    print("2. Ver Uso de Memoria")
+    print("3. Ver Uso de Disco")
+    print("4. Listar Procesos")
+    print("5. Mostrar Información de Red")
+    print("0. Volver al Menú Principal")
+
+def _clear_screen():
+    """Limpia la pantalla de la terminal."""
+    os.system('cls' if os.name == 'nt' else 'clear')
+
+def _press_enter_to_continue():
+    """Pausa la ejecución hasta que el usuario presione Enter."""
+    input("\nPresione Enter para continuar...")
 
 def get_cpu_info():
-    """Displays CPU information using psutil and lscpu."""
+    """Muestra información de la CPU usando psutil y lscpu."""
+    _clear_screen()
     print("--- Información de CPU ---")
     print(f"Número de CPUs (físicos): {psutil.cpu_count(logical=False)}")
     print(f"Número de CPUs (lógicos/hilos): {psutil.cpu_count(logical=True)}")
     print(f"Uso de CPU (último segundo): {psutil.cpu_percent(interval=1)}%")
 
-    # More detailed info with lscpu
     print("\n--- Detalles de CPU (lscpu) ---")
     result = _run_command(["lscpu"], check_success=False)
     if result and result.returncode == 0:
         print(result.stdout)
     else:
         print("No se pudo obtener la información detallada de la CPU (lscpu no encontrado o error).")
-
+    _press_enter_to_continue()
 
 def get_memory_info():
-    """Displays memory information using psutil and free."""
+    """Muestra información de la memoria usando psutil y free."""
+    _clear_screen()
     print("\n--- Información de Memoria ---")
     mem = psutil.virtual_memory()
     print(f"Total: {mem.total / (1024**3):.2f} GB")
@@ -63,17 +83,17 @@ def get_memory_info():
     print(f"Usado: {mem.used / (1024**3):.2f} GB")
     print(f"Porcentaje de uso: {mem.percent}%")
 
-    # More detailed info with free -h
     print("\n--- Detalles de Memoria (free -h) ---")
     result = _run_command(["free", "-h"], check_success=False)
     if result and result.returncode == 0:
         print(result.stdout)
     else:
         print("No se pudo obtener la información detallada de la memoria (free no encontrado o error).")
-
+    _press_enter_to_continue()
 
 def get_disk_info():
-    """Displays disk usage information using psutil and df -h."""
+    """Muestra información del uso de disco usando psutil y df -h."""
+    _clear_screen()
     print("\n--- Información de Disco ---")
     partitions = psutil.disk_partitions()
     for p in partitions:
@@ -89,32 +109,30 @@ def get_disk_info():
         except Exception as e:
             print(f"  Error al obtener información de {p.mountpoint}: {e}")
 
-    # More detailed info with df -h
     print("\n--- Detalles de Disco (df -h) ---")
     result = _run_command(["df", "-h"], check_success=False)
     if result and result.returncode == 0:
         print(result.stdout)
     else:
         print("No se pudo obtener la información detallada del disco (df no encontrado o error).")
-
+    _press_enter_to_continue()
 
 def list_running_processes():
-    """Lists running processes using psutil and top/htop."""
+    """Lista los procesos en ejecución usando psutil y top/htop."""
+    _clear_screen()
     print("\n--- Procesos en Ejecución (Top 10 por CPU/Memoria) ---")
     processes = []
     for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
         try:
             processes.append(proc.info)
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass # Ignore processes that disappear or deny access
+            pass
 
-    # Sort by CPU usage and then by memory usage
     processes.sort(key=lambda x: (x['cpu_percent'], x['memory_percent']), reverse=True)
 
-    for i, p in enumerate(processes[:10]): # Top 10
+    for i, p in enumerate(processes[:10]):
         print(f"PID: {p['pid']}, Nombre: {p['name']}, CPU: {p['cpu_percent']}%, Memoria: {p['memory_percent']:.2f}%")
 
-    # Offer to display more with a system command
     print("\n--- Información detallada de procesos (top/htop si está disponible) ---")
     if _run_command(["which", "htop"], check_success=False, capture_output=False).returncode == 0:
         print("Para ver una lista interactiva, use 'htop' en su terminal.")
@@ -122,39 +140,40 @@ def list_running_processes():
         print("Para ver una lista interactiva, use 'top' en su terminal.")
     else:
         print("Instale 'htop' o 'top' para una visualización interactiva de procesos.")
+    _press_enter_to_continue()
 
+def get_network_info():
+    """Muestra información de red del sistema Linux (interfaces, direcciones IP)."""
+    _clear_screen()
+    print("\n--- Información de Red ---")
+    result_ip = _run_command(["ip", "a"], capture_output=True, check_success=False)
+    if result_ip and result_ip.returncode == 0:
+        print("--- Detalles de Interfaces de Red (ip a) ---")
+        print(result_ip.stdout)
+    else:
+        print("No se pudo obtener la configuración de interfaces de red (ip a no encontrado o error).")
 
-def kill_process():
-    """Kills a process by PID."""
-    pid = input("Ingrese el PID del proceso a terminar: ")
-    try:
-        pid = int(pid)
-    except ValueError:
-        print("PID no válido. Debe ser un número.")
-        return
-
-    print(f"Attempting to kill process with PID: {pid}")
-    # Use 'kill' command which is standard
-    result = _run_command(["sudo", "kill", "-9", str(pid)], check_success=False) # -9 for forceful kill
+    print("\n--- Estadísticas de Red (netstat -s) ---")
+    result_netstat = _run_command(["netstat", "-s"], capture_output=True, check_success=False)
+    if result_netstat and result_netstat.returncode == 0:
+        print(result_netstat.stdout)
+    else:
+        print("No se pudieron obtener las estadísticas de red (netstat -s no encontrado o error).")
     
-    if result and result.returncode == 0:
-        print(f"Proceso {pid} terminado exitosamente.")
-    elif result:
-        print(f"Falló la terminación del proceso {pid}. Código de salida: {result.returncode}", file=sys.stderr)
-        if result.stderr:
-            print(f"Detalles: {result.stderr.strip()}", file=sys.stderr)
+    print("\n--- Conexiones de Red Abiertas (netstat -tuln) ---")
+    result_connections = _run_command(["netstat", "-tuln"], capture_output=True, check_success=False)
+    if result_connections and result_connections.returncode == 0:
+        print(result_connections.stdout)
+    else:
+        print("No se pudieron obtener las conexiones de red (netstat -tuln no encontrado o error).")
+
+    _press_enter_to_continue()
 
 def manage_linux_resources():
-    """Main menu for Linux resource management."""
+    """Menú principal para la gestión y monitorización de recursos Linux."""
     while True:
-        print("\n--- Gestión de Recursos Linux ---")
-        print("1. Información de CPU")
-        print("2. Información de Memoria")
-        print("3. Información de Disco")
-        print("4. Listar Procesos en Ejecución")
-        print("5. Terminar un Proceso (PID)")
-        print("6. Volver al menú principal")
-
+        common._clear_screen()
+        display_monitoring_menu()
         choice = input("Seleccione una opción: ")
 
         if choice == '1':
@@ -165,9 +184,11 @@ def manage_linux_resources():
             get_disk_info()
         elif choice == '4':
             list_running_processes()
-        elif choice == '5':
-            kill_process()
-        elif choice == '6':
+        elif choice == '5': # Nueva opción
+            get_network_info()
+        elif choice == '0':
+            print("Volviendo al menú principal...")
             break
         else:
             print("Opción no válida. Intente de nuevo.")
+        common.press_enter_to_continue()

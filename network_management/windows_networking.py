@@ -106,7 +106,6 @@ def configure_dns_servers():
 
     common.press_enter_to_continue()
 
-
 def network_management_menu():
     """Menú principal para la gestión de redes en Windows."""
     while True:
