@@ -1,143 +1,179 @@
-# system_monitoring/linux_resources.py
+import subprocess
+import sys
+import psutil # Keep psutil as it's a dedicated library for system info
 
-from utils import common
-import psutil
-import time
-
-def display_monitoring_menu():
-    """Muestra el submenú de monitorización de recursos en Linux."""
-    common.clear_screen()
-    print("--- Gestión y Monitorización de Recursos (Linux) ---")
-    print("1. Ver Uso de CPU")
-    print("2. Ver Uso de Memoria")
-    print("3. Ver Uso de Disco")
-    print("4. Listar Procesos")
-    print("5. Mostrar Información de Red")
-    print("0. Volver al Menú Principal")
-
-def view_cpu_usage():
-    print("\n--- Uso de CPU (Linux) ---")
-    print("Obteniendo uso de CPU (esto puede tardar unos segundos)...")
+# --- Helper function for command execution (_run_command) ---
+def _run_command(command, check_success=True, capture_output=True, shell=False):
+    """
+    Executes a system command and handles its output and errors.
+    (Same helper function as above, duplicated for self-contained files)
+    """
     try:
-        # psutil.cpu_percent() necesita un intervalo para calcular el porcentaje
-        cpu_percent = psutil.cpu_percent(interval=1)
-        print(f"Uso de CPU: {cpu_percent}%")
-        print(f"Número de núcleos lógicos: {psutil.cpu_count(logical=True)}")
-        print(f"Número de núcleos físicos: {psutil.cpu_count(logical=False)}")
+        result = subprocess.run(
+            command,
+            check=check_success,
+            capture_output=capture_output,
+            text=True,
+            shell=shell
+        )
+        return result
+    except FileNotFoundError:
+        cmd_name = command[0] if isinstance(command, list) else command.split()[0]
+        print(f"Error: Command '{cmd_name}' not found. Make sure it's installed and in your PATH.", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing command: {e}", file=sys.stderr)
+        print(f"STDOUT: {e.stdout.strip()}", file=sys.stderr)
+        print(f"STDERR: {e.stderr.strip()}", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
     except Exception as e:
-        print(f"Error al obtener el uso de CPU: {e}")
-    common.press_enter_to_continue()
+        print(f"Unexpected error when executing command: {e}", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
 
-def view_memory_usage():
-    print("\n--- Uso de Memoria (Linux) ---")
+# --- Resource Functions ---
+
+def get_cpu_info():
+    """Displays CPU information using psutil and lscpu."""
+    print("--- Información de CPU ---")
+    print(f"Número de CPUs (físicos): {psutil.cpu_count(logical=False)}")
+    print(f"Número de CPUs (lógicos/hilos): {psutil.cpu_count(logical=True)}")
+    print(f"Uso de CPU (último segundo): {psutil.cpu_percent(interval=1)}%")
+
+    # More detailed info with lscpu
+    print("\n--- Detalles de CPU (lscpu) ---")
+    result = _run_command(["lscpu"], check_success=False)
+    if result and result.returncode == 0:
+        print(result.stdout)
+    else:
+        print("No se pudo obtener la información detallada de la CPU (lscpu no encontrado o error).")
+
+
+def get_memory_info():
+    """Displays memory information using psutil and free."""
+    print("\n--- Información de Memoria ---")
+    mem = psutil.virtual_memory()
+    print(f"Total: {mem.total / (1024**3):.2f} GB")
+    print(f"Disponible: {mem.available / (1024**3):.2f} GB")
+    print(f"Usado: {mem.used / (1024**3):.2f} GB")
+    print(f"Porcentaje de uso: {mem.percent}%")
+
+    # More detailed info with free -h
+    print("\n--- Detalles de Memoria (free -h) ---")
+    result = _run_command(["free", "-h"], check_success=False)
+    if result and result.returncode == 0:
+        print(result.stdout)
+    else:
+        print("No se pudo obtener la información detallada de la memoria (free no encontrado o error).")
+
+
+def get_disk_info():
+    """Displays disk usage information using psutil and df -h."""
+    print("\n--- Información de Disco ---")
+    partitions = psutil.disk_partitions()
+    for p in partitions:
+        try:
+            usage = psutil.disk_usage(p.mountpoint)
+            print(f"Dispositivo: {p.device}, Montaje: {p.mountpoint}")
+            print(f"  Total: {usage.total / (1024**3):.2f} GB")
+            print(f"  Usado: {usage.used / (1024**3):.2f} GB")
+            print(f"  Disponible: {usage.free / (1024**3):.2f} GB")
+            print(f"  Porcentaje de uso: {usage.percent}%")
+        except PermissionError:
+            print(f"  Permiso denegado para {p.mountpoint}")
+        except Exception as e:
+            print(f"  Error al obtener información de {p.mountpoint}: {e}")
+
+    # More detailed info with df -h
+    print("\n--- Detalles de Disco (df -h) ---")
+    result = _run_command(["df", "-h"], check_success=False)
+    if result and result.returncode == 0:
+        print(result.stdout)
+    else:
+        print("No se pudo obtener la información detallada del disco (df no encontrado o error).")
+
+
+def list_running_processes():
+    """Lists running processes using psutil and top/htop."""
+    print("\n--- Procesos en Ejecución (Top 10 por CPU/Memoria) ---")
+    processes = []
+    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
+        try:
+            processes.append(proc.info)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass # Ignore processes that disappear or deny access
+
+    # Sort by CPU usage and then by memory usage
+    processes.sort(key=lambda x: (x['cpu_percent'], x['memory_percent']), reverse=True)
+
+    for i, p in enumerate(processes[:10]): # Top 10
+        print(f"PID: {p['pid']}, Nombre: {p['name']}, CPU: {p['cpu_percent']}%, Memoria: {p['memory_percent']:.2f}%")
+
+    # Offer to display more with a system command
+    print("\n--- Información detallada de procesos (top/htop si está disponible) ---")
+    if _run_command(["which", "htop"], check_success=False, capture_output=False).returncode == 0:
+        print("Para ver una lista interactiva, use 'htop' en su terminal.")
+    elif _run_command(["which", "top"], check_success=False, capture_output=False).returncode == 0:
+        print("Para ver una lista interactiva, use 'top' en su terminal.")
+    else:
+        print("Instale 'htop' o 'top' para una visualización interactiva de procesos.")
+
+
+def kill_process():
+    """Kills a process by PID."""
+    pid = input("Ingrese el PID del proceso a terminar: ")
     try:
-        mem = psutil.virtual_memory()
-        print(f"Total: {mem.total / (1024**3):.2f} GB")
-        print(f"Disponible: {mem.available / (1024**3):.2f} GB")
-        print(f"Usada: {mem.used / (1024**3):.2f} GB")
-        print(f"Porcentaje: {mem.percent}%")
-        
-        swap = psutil.swap_memory()
-        print("\n--- Uso de Memoria Swap ---")
-        print(f"Total: {swap.total / (1024**3):.2f} GB")
-        print(f"Usada: {swap.used / (1024**3):.2f} GB")
-        print(f"Porcentaje: {swap.percent}%")
+        pid = int(pid)
+    except ValueError:
+        print("PID no válido. Debe ser un número.")
+        return
 
-    except Exception as e:
-        print(f"Error al obtener el uso de memoria: {e}")
-    common.press_enter_to_continue()
+    print(f"Attempting to kill process with PID: {pid}")
+    # Use 'kill' command which is standard
+    result = _run_command(["sudo", "kill", "-9", str(pid)], check_success=False) # -9 for forceful kill
+    
+    if result and result.returncode == 0:
+        print(f"Proceso {pid} terminado exitosamente.")
+    elif result:
+        print(f"Falló la terminación del proceso {pid}. Código de salida: {result.returncode}", file=sys.stderr)
+        if result.stderr:
+            print(f"Detalles: {result.stderr.strip()}", file=sys.stderr)
 
-def view_disk_usage():
-    print("\n--- Uso de Disco (Linux) ---")
-    try:
-        partitions = psutil.disk_partitions()
-        for p in partitions:
-            try:
-                usage = psutil.disk_usage(p.mountpoint)
-                print(f"  Dispositivo: {p.device}")
-                print(f"  Punto de montaje: {p.mountpoint}")
-                print(f"  Tipo de sistema de archivos: {p.fstype}")
-                print(f"  Total: {usage.total / (1024**3):.2f} GB")
-                print(f"  Usado: {usage.used / (1024**3):.2f} GB")
-                print(f"  Libre: {usage.free / (1024**3):.2f} GB")
-                print(f"  Porcentaje: {usage.percent}%")
-                print("-" * 30)
-            except Exception as e:
-                print(f"Error al obtener uso de disco para {p.mountpoint}: {e}")
-    except Exception as e:
-        print(f"Error al listar las particiones de disco: {e}")
-    common.press_enter_to_continue()
-
-def list_processes():
-    print("\n--- Listado de Procesos (Linux) ---")
-    print("{:<7} {:<10} {:<8} {:<8} {:<25}".format("PID", "Usuario", "CPU%", "Mem%", "Comando"))
-    print("-" * 60)
-    try:
-        # Ordenar por uso de CPU para ver los procesos más activos
-        processes = sorted(psutil.process_iter(['pid', 'name', 'username', 'cpu_percent', 'memory_percent']),
-                           key=lambda p: p.info['cpu_percent'], reverse=True)
-        for p in processes[:20]: # Mostrar los 20 procesos principales
-            try:
-                p_info = p.info
-                print(f"{p_info['pid']:<7} {p_info['username']:<10} {p_info['cpu_percent']:.1f}% {p_info['memory_percent']:.1f}% {p_info['name'][:25]:<25}")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                # Proceso ya no existe o acceso denegado
-                continue
-    except Exception as e:
-        print(f"Error al listar procesos: {e}")
-    common.press_enter_to_continue()
-
-def show_network_info():
-    print("\n--- Información de Red (Linux) ---")
-    print("Estadísticas de red:")
-    try:
-        net_io = psutil.net_io_counters(pernic=True)
-        for interface, stats in net_io.items():
-            print(f"  Interfaz: {interface}")
-            print(f"    Bytes enviados: {stats.bytes_sent / (1024**2):.2f} MB")
-            print(f"    Bytes recibidos: {stats.bytes_recv / (1024**2):.2f} MB")
-            print(f"    Paquetes enviados: {stats.packets_sent}")
-            print(f"    Paquetes recibidos: {stats.packets_recv}")
-            print("-" * 30)
-        
-        print("\nDirecciones IP:")
-        net_if_addrs = psutil.net_if_addrs()
-        for interface, addrs in net_if_addrs.items():
-            print(f"  Interfaz: {interface}")
-            for addr in addrs:
-                if addr.family == psutil.AF_LINK:
-                    print(f"    MAC: {addr.address}")
-                elif addr.family == psutil.AF_INET:
-                    print(f"    IPv4: {addr.address}/{addr.netmask} (Broadcast: {addr.broadcast})")
-                elif addr.family == psutil.AF_INET6:
-                    print(f"    IPv6: {addr.address}")
-            print("-" * 30)
-
-    except Exception as e:
-        print(f"Error al obtener información de red: {e}")
-    common.press_enter_to_continue()
-
-
-def system_monitoring_menu():
-    """Menú principal para la monitorización de recursos en Linux."""
+def manage_linux_resources():
+    """Main menu for Linux resource management."""
     while True:
-        common.clear_screen()
-        display_monitoring_menu()
-        choice = input("Su elección: ")
+        print("\n--- Gestión de Recursos Linux ---")
+        print("1. Información de CPU")
+        print("2. Información de Memoria")
+        print("3. Información de Disco")
+        print("4. Listar Procesos en Ejecución")
+        print("5. Terminar un Proceso (PID)")
+        print("6. Volver al menú principal")
+
+        choice = input("Seleccione una opción: ")
 
         if choice == '1':
-            view_cpu_usage()
+            get_cpu_info()
         elif choice == '2':
-            view_memory_usage()
+            get_memory_info()
         elif choice == '3':
-            view_disk_usage()
+            get_disk_info()
         elif choice == '4':
-            list_processes()
+            list_running_processes()
         elif choice == '5':
-            show_network_info()
-        elif choice == '0':
-            print("Volviendo al menú principal...")
+            kill_process()
+        elif choice == '6':
             break
         else:
-            print("Opción no válida. Inténtelo de nuevo.")
-        common.press_enter_to_continue()
+            print("Opción no válida. Intente de nuevo.")
+
+if __name__ == "__main__":
+    if sys.platform.startswith("linux"):
+        manage_linux_resources()
+    else:
+        print("Este script está diseñado para sistemas operativos Linux.")

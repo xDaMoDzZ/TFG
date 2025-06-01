@@ -1,234 +1,222 @@
-# firewall_management/linux_firewall.py
+import subprocess
+import sys
+import os
 
-from utils import common
+# --- Helper function for command execution (_run_command) ---
+def _run_command(command, check_success=True, capture_output=True, shell=False):
+    """
+    Executes a system command and handles its output and errors.
 
-def display_firewall_menu():
-    """Muestra el submenú de gestión de firewall en Linux."""
-    common.clear_screen()
-    print("--- Gestión de Firewall (Linux - ufw/firewalld) ---")
-    print("1. Ver Estado del Firewall")
-    print("2. Habilitar Firewall")
-    print("3. Deshabilitar Firewall")
-    print("4. Añadir Regla (Permitir Puerto/Servicio)")
-    print("5. Eliminar Regla")
-    print("6. Restablecer Firewall (ufw)")
-    print("7. Recargar Firewall (firewalld)")
-    print("0. Volver al Menú Principal")
+    Args:
+        command (list or str): The command to execute. If a list, shell=False is recommended.
+                               If a string, shell=True is recommended (less secure).
+        check_success (bool): If True, raises a CalledProcessError if command returns non-zero.
+        capture_output (bool): If True, captures stdout and stderr.
+        shell (bool): If True, command is executed via the shell. Less secure for user input.
 
-def get_firewall_type():
-    """Detecta si ufw o firewalld está activo."""
-    ufw_check = common.run_command(["systemctl", "is-active", "ufw"], capture_output=True, check=False)
-    if ufw_check and ufw_check.returncode == 0 and "active" in ufw_check.stdout:
+    Returns:
+        subprocess.CompletedProcess: Object with execution results (stdout, stderr, returncode).
+    Raises:
+        subprocess.CalledProcessError: If check_success is True and command fails.
+        FileNotFoundError: If the command is not found.
+    """
+    try:
+        result = subprocess.run(
+            command,
+            check=check_success,
+            capture_output=capture_output,
+            text=True,
+            shell=shell
+        )
+        return result
+    except FileNotFoundError:
+        cmd_name = command[0] if isinstance(command, list) else command.split()[0]
+        print(f"Error: Command '{cmd_name}' not found. Make sure it's installed and in your PATH.", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
+    except subprocess.CalledProcessError as e:
+        print(f"Error executing command: {e}", file=sys.stderr)
+        print(f"STDOUT: {e.stdout.strip()}", file=sys.stderr)
+        print(f"STDERR: {e.stderr.strip()}", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
+    except Exception as e:
+        print(f"Unexpected error when executing command: {e}", file=sys.stderr)
+        if check_success:
+            sys.exit(1)
+        return None
+
+# --- Firewall Functions ---
+
+def _get_firewall_command():
+    """Detects and returns the appropriate firewall command (ufw or firewall-cmd)."""
+    if _run_command(["which", "ufw"], check_success=False, capture_output=False).returncode == 0:
         return "ufw"
-    
-    firewalld_check = common.run_command(["systemctl", "is-active", "firewalld"], capture_output=True, check=False)
-    if firewalld_check and firewalld_check.returncode == 0 and "active" in firewalld_check.stdout:
-        return "firewalld"
-        
-    return "none" # Ninguno de los dos está activo o no se pudo determinar
-
-def view_firewall_status():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        print("\n--- Estado del Firewall (ufw) ---")
-        command = ["sudo", "ufw", "status", "verbose"]
-    elif firewall_type == "firewalld":
-        print("\n--- Estado del Firewall (firewalld) ---")
-        command = ["sudo", "firewall-cmd", "--state"]
-        result = common.run_command(command, capture_output=True)
-        if result and result.returncode == 0:
-            print(result.stdout)
-            print("\n--- Reglas de Firewall (firewalld - Zona pública) ---")
-            command = ["sudo", "firewall-cmd", "--list-all"]
-        else:
-            print("Firewalld no está corriendo o no se pudo obtener el estado.")
-            return
-    else:
-        print("No se detectó UFW ni Firewalld activo. No se puede verificar el estado.")
-        return
-
-    result = common.run_command(command, capture_output=True)
-    if result and result.returncode == 0:
-        print(result.stdout)
-    else:
-        print(f"Error al obtener el estado del firewall ({firewall_type}).")
-    common.press_enter_to_continue()
+    elif _run_command(["which", "firewall-cmd"], check_success=False, capture_output=False).returncode == 0:
+        return "firewall-cmd"
+    return None
 
 def enable_firewall():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        command = ["sudo", "ufw", "enable"]
-    elif firewall_type == "firewalld":
-        command = ["sudo", "systemctl", "start", "firewalld"]
-        result = common.run_command(["sudo", "systemctl", "enable", "firewalld"]) # Para que sea persistente
-        if result and result.returncode == 0:
-            print("Firewalld habilitado al inicio del sistema.")
-    else:
-        print("No se detectó UFW ni Firewalld. No se puede habilitar.")
+    """Enables the system firewall."""
+    firewall_cmd = _get_firewall_command()
+    if not firewall_cmd:
+        print("No supported firewall command (ufw or firewall-cmd) found.", file=sys.stderr)
         return
 
-    result = common.run_command(command)
+    print(f"Attempting to enable firewall using {firewall_cmd}...")
+    if firewall_cmd == "ufw":
+        # Enable ufw, auto-confirm
+        result = _run_command(["sudo", "ufw", "--force", "enable"])
+    elif firewall_cmd == "firewall-cmd":
+        # Start and enable firewalld service
+        result = _run_command(["sudo", "systemctl", "start", "firewalld"])
+        if result and result.returncode == 0:
+            result = _run_command(["sudo", "systemctl", "enable", "firewalld"])
+    
     if result and result.returncode == 0:
-        print(f"Firewall ({firewall_type}) habilitado.")
-    else:
-        print(f"Error al habilitar el firewall ({firewall_type}).")
-    common.press_enter_to_continue()
-
+        print("Firewall enabled successfully.")
+    elif result:
+        print(f"Failed to enable firewall. Exit code: {result.returncode}", file=sys.stderr)
 
 def disable_firewall():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        command = ["sudo", "ufw", "disable"]
-    elif firewall_type == "firewalld":
-        command = ["sudo", "systemctl", "stop", "firewalld"]
-        result = common.run_command(["sudo", "systemctl", "disable", "firewalld"]) # Para que no inicie automáticamente
-        if result and result.returncode == 0:
-            print("Firewalld deshabilitado al inicio del sistema.")
-    else:
-        print("No se detectó UFW ni Firewalld. No se puede deshabilitar.")
+    """Disables the system firewall."""
+    firewall_cmd = _get_firewall_command()
+    if not firewall_cmd:
+        print("No supported firewall command (ufw or firewall-cmd) found.", file=sys.stderr)
         return
 
-    result = common.run_command(command)
+    print(f"Attempting to disable firewall using {firewall_cmd}...")
+    if firewall_cmd == "ufw":
+        # Disable ufw, auto-confirm
+        result = _run_command(["sudo", "ufw", "disable"])
+    elif firewall_cmd == "firewall-cmd":
+        # Stop and disable firewalld service
+        result = _run_command(["sudo", "systemctl", "stop", "firewalld"])
+        if result and result.returncode == 0:
+            result = _run_command(["sudo", "systemctl", "disable", "firewalld"])
+
     if result and result.returncode == 0:
-        print(f"Firewall ({firewall_type}) deshabilitado.")
-    else:
-        print(f"Error al deshabilitar el firewall ({firewall_type}).")
-    common.press_enter_to_continue()
+        print("Firewall disabled successfully.")
+    elif result:
+        print(f"Failed to disable firewall. Exit code: {result.returncode}", file=sys.stderr)
 
-def add_firewall_rule():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        port = input("Introduce el número de puerto o nombre de servicio (ej. 80, ssh): ")
-        protocol = input("Introduce el protocolo (tcp/udp, o dejar vacío para ambos): ").strip()
-        direction = input("Introduce la dirección (in/out, o dejar vacío para in): ").strip()
+def add_firewall_rule(port, protocol, action="allow"):
+    """Adds a firewall rule to allow/deny traffic on a specific port/protocol."""
+    firewall_cmd = _get_firewall_command()
+    if not firewall_cmd:
+        print("No supported firewall command (ufw or firewall-cmd) found.", file=sys.stderr)
+        return
 
-        if protocol and direction:
-            command = ["sudo", "ufw", "allow", "from", "any", "to", "any", "port", port, "proto", protocol, "in", direction]
-        elif protocol:
-            command = ["sudo", "ufw", "allow", port, "/tcp" if protocol == "tcp" else "/udp" if protocol == "udp" else "", "comment", f"Allow {port}/{protocol}"]
-            if not protocol:
-                command = ["sudo", "ufw", "allow", port]
-        else:
-            command = ["sudo", "ufw", "allow", port]
-
-        result = common.run_command(command)
+    print(f"Attempting to {action} traffic on port {port}/{protocol} using {firewall_cmd}...")
+    result = None
+    if firewall_cmd == "ufw":
+        result = _run_command(["sudo", "ufw", action, str(port), "/", protocol])
+    elif firewall_cmd == "firewall-cmd":
+        # Add rule to permanent and then reload
+        result = _run_command(["sudo", "firewall-cmd", "--permanent", f"--{action}-port={port}/{protocol}"])
         if result and result.returncode == 0:
-            print(f"Regla de ufw para puerto/servicio '{port}' añadida.")
-        else:
-            print(f"Error al añadir regla de ufw para '{port}'.")
-    elif firewall_type == "firewalld":
-        port = input("Introduce el número de puerto (ej. 80/tcp): ")
-        service = input("Introduce el nombre de servicio (ej. http, ssh) o dejar vacío si es un puerto: ").strip()
-        zone = input("Introduce la zona (ej. public, home, o dejar vacío para public): ").strip() or "public"
+            _run_command(["sudo", "firewall-cmd", "--reload"]) # Reload to apply changes immediately
+    
+    if result and result.returncode == 0:
+        print(f"Firewall rule to {action} {port}/{protocol} added successfully.")
+    elif result:
+        print(f"Failed to add firewall rule. Exit code: {result.returncode}", file=sys.stderr)
 
-        if service:
-            command = ["sudo", "firewall-cmd", "--zone", zone, "--add-service", service, "--permanent"]
-            description = f"servicio '{service}'"
-        else:
-            command = ["sudo", "firewall-cmd", "--zone", zone, "--add-port", port, "--permanent"]
-            description = f"puerto '{port}'"
+def delete_firewall_rule(port, protocol, action="allow"):
+    """Deletes a firewall rule."""
+    firewall_cmd = _get_firewall_command()
+    if not firewall_cmd:
+        print("No supported firewall command (ufw or firewall-cmd) found.", file=sys.stderr)
+        return
 
-        result = common.run_command(command)
+    print(f"Attempting to delete rule for {action} traffic on port {port}/{protocol} using {firewall_cmd}...")
+    result = None
+    if firewall_cmd == "ufw":
+        result = _run_command(["sudo", "ufw", "delete", action, str(port), "/", protocol])
+    elif firewall_cmd == "firewall-cmd":
+        # Remove rule from permanent and then reload
+        result = _run_command(["sudo", "firewall-cmd", "--permanent", f"--remove-{action}-port={port}/{protocol}"])
         if result and result.returncode == 0:
-            print(f"Regla de firewalld para {description} añadida a la zona '{zone}'. ¡Recuerda recargar el firewall!")
-        else:
-            print(f"Error al añadir regla de firewalld para {description}.")
-    else:
-        print("No se detectó UFW ni Firewalld. No se puede añadir reglas.")
-    common.press_enter_to_continue()
+            _run_command(["sudo", "firewall-cmd", "--reload"]) # Reload to apply changes immediately
+    
+    if result and result.returncode == 0:
+        print(f"Firewall rule for {action} {port}/{protocol} deleted successfully.")
+    elif result:
+        print(f"Failed to delete firewall rule. Exit code: {result.returncode}", file=sys.stderr)
 
-def delete_firewall_rule():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        # Para eliminar una regla en ufw, lo más fácil es por número
-        print("\nPara eliminar una regla de ufw, primero ve el estado detallado (opción 1) y anota el número de la regla.")
-        rule_number = input("Introduce el número de la regla a eliminar: ")
-        command = ["sudo", "ufw", "delete", rule_number]
-        result = common.run_command(command)
-        if result and result.returncode == 0:
-            print(f"Regla de ufw número '{rule_number}' eliminada.")
-        else:
-            print(f"Error al eliminar regla de ufw número '{rule_number}'.")
-    elif firewall_type == "firewalld":
-        port = input("Introduce el número de puerto a eliminar (ej. 80/tcp) o dejar vacío si es un servicio: ").strip()
-        service = input("Introduce el nombre de servicio a eliminar (ej. http, ssh) o dejar vacío si es un puerto: ").strip()
-        zone = input("Introduce la zona (ej. public, home, o dejar vacío para public): ").strip() or "public"
+def list_firewall_rules():
+    """Lists current firewall rules."""
+    firewall_cmd = _get_firewall_command()
+    if not firewall_cmd:
+        print("No supported firewall command (ufw or firewall-cmd) found.", file=sys.stderr)
+        return
 
-        if service:
-            command = ["sudo", "firewall-cmd", "--zone", zone, "--remove-service", service, "--permanent"]
-            description = f"servicio '{service}'"
-        elif port:
-            command = ["sudo", "firewall-cmd", "--zone", zone, "--remove-port", port, "--permanent"]
-            description = f"puerto '{port}'"
-        else:
-            print("Debes especificar un puerto o un servicio a eliminar.")
-            common.press_enter_to_continue()
-            return
+    print(f"Listing firewall rules using {firewall_cmd}...")
+    result = None
+    if firewall_cmd == "ufw":
+        result = _run_command(["sudo", "ufw", "status", "verbose"])
+    elif firewall_cmd == "firewall-cmd":
+        result = _run_command(["sudo", "firewall-cmd", "--list-all"])
+    
+    if result and result.returncode == 0:
+        print(result.stdout)
+    elif result:
+        print(f"Failed to list firewall rules. Exit code: {result.returncode}", file=sys.stderr)
 
-        result = common.run_command(command)
-        if result and result.returncode == 0:
-            print(f"Regla de firewalld para {description} eliminada de la zona '{zone}'. ¡Recuerda recargar el firewall!")
-        else:
-            print(f"Error al eliminar regla de firewalld para {description}.")
-    else:
-        print("No se detectó UFW ni Firewalld. No se puede eliminar reglas.")
-    common.press_enter_to_continue()
-
-def reset_ufw():
-    firewall_type = get_firewall_type()
-    if firewall_type == "ufw":
-        confirm = input("¡ADVERTENCIA! Esto restablecerá UFW a su configuración por defecto y eliminará todas las reglas. ¿Continuar? (s/n): ").lower()
-        if confirm == 's':
-            command = ["sudo", "ufw", "reset"]
-            result = common.run_command(command)
-            if result and result.returncode == 0:
-                print("UFW restablecido a la configuración por defecto.")
-            else:
-                print("Error al restablecer UFW.")
-        else:
-            print("Operación cancelada.")
-    else:
-        print("Esta opción es solo para UFW. Firewalld no tiene una función de 'reset' directa similar.")
-    common.press_enter_to_continue()
-
-def reload_firewalld():
-    firewall_type = get_firewall_type()
-    if firewall_type == "firewalld":
-        command = ["sudo", "firewall-cmd", "--reload"]
-        result = common.run_command(command)
-        if result and result.returncode == 0:
-            print("Firewalld recargado correctamente. Los cambios permanentes se han aplicado.")
-        else:
-            print("Error al recargar Firewalld.")
-    else:
-        print("Esta opción es solo para Firewalld. UFW aplica los cambios instantáneamente.")
-    common.press_enter_to_continue()
-
-
-def firewall_management_menu():
-    """Menú principal para la gestión de firewalls en Linux."""
+def manage_linux_firewall():
+    """Main menu for Linux firewall management."""
     while True:
-        common.clear_screen()
-        display_firewall_menu()
-        choice = input("Su elección: ")
+        print("\n--- Gestión de Firewall Linux ---")
+        print("1. Habilitar Firewall")
+        print("2. Deshabilitar Firewall")
+        print("3. Añadir Regla (Permitir/Denegar)")
+        print("4. Eliminar Regla")
+        print("5. Listar Reglas")
+        print("6. Volver al menú principal")
+
+        choice = input("Seleccione una opción: ")
 
         if choice == '1':
-            view_firewall_status()
-        elif choice == '2':
             enable_firewall()
-        elif choice == '3':
+        elif choice == '2':
             disable_firewall()
+        elif choice == '3':
+            port = input("Ingrese el número de puerto: ")
+            protocol = input("Ingrese el protocolo (tcp/udp): ").lower()
+            action = input("Ingrese la acción (allow/deny, por defecto 'allow'): ").lower() or "allow"
+            if protocol not in ['tcp', 'udp']:
+                print("Protocolo no válido. Debe ser 'tcp' o 'udp'.")
+                continue
+            try:
+                int(port) # Check if port is a valid number
+            except ValueError:
+                print("Puerto no válido. Debe ser un número.")
+                continue
+            add_firewall_rule(port, protocol, action)
         elif choice == '4':
-            add_firewall_rule()
+            port = input("Ingrese el número de puerto de la regla a eliminar: ")
+            protocol = input("Ingrese el protocolo (tcp/udp): ").lower()
+            action = input("Ingrese la acción (allow/deny, por defecto 'allow'): ").lower() or "allow"
+            if protocol not in ['tcp', 'udp']:
+                print("Protocolo no válido. Debe ser 'tcp' o 'udp'.")
+                continue
+            try:
+                int(port) # Check if port is a valid number
+            except ValueError:
+                print("Puerto no válido. Debe ser un número.")
+                continue
+            delete_firewall_rule(port, protocol, action)
         elif choice == '5':
-            delete_firewall_rule()
+            list_firewall_rules()
         elif choice == '6':
-            reset_ufw()
-        elif choice == '7':
-            reload_firewalld()
-        elif choice == '0':
-            print("Volviendo al menú principal...")
             break
         else:
-            print("Opción no válida. Inténtelo de nuevo.")
-        common.press_enter_to_continue()
+            print("Opción no válida. Intente de nuevo.")
+
+if __name__ == "__main__":
+    if sys.platform.startswith("linux"):
+        manage_linux_firewall()
+    else:
+        print("Este script está diseñado para sistemas operativos Linux.")
