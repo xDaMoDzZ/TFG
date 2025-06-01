@@ -43,7 +43,7 @@ def main():
 
         if choice == '1':
             if os_type == "Linux":
-                linux_users.manage_linux_users()
+                linux_users.manage_linux_users_and_groups()
             elif os_type == "Windows":
                 windows_users.user_management_menu()
             else:
