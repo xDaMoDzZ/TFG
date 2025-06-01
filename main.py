@@ -50,7 +50,7 @@ def main():
                 print("Gestión de usuarios no disponible para este SO.")
         elif choice == '2':
             if os_type == "Linux":
-                linux_networking.manage_linux_networking()
+                linux_networking.network_management_menu_linux()
             elif os_type == "Windows":
                 windows_networking.network_management_menu()
             else:
