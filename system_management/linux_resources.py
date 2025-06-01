@@ -171,9 +171,3 @@ def manage_linux_resources():
             break
         else:
             print("Opción no válida. Intente de nuevo.")
-
-if __name__ == "__main__":
-    if sys.platform.startswith("linux"):
-        manage_linux_resources()
-    else:
-        print("Este script está diseñado para sistemas operativos Linux.")

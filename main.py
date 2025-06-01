@@ -43,38 +43,36 @@ def main():
 
         if choice == '1':
             if os_type == "Linux":
-                linux_users.user_management_menu()
+                linux_users.manage_linux_users()
             elif os_type == "Windows":
                 windows_users.user_management_menu()
             else:
                 print("Gestión de usuarios no disponible para este SO.")
         elif choice == '2':
             if os_type == "Linux":
-                linux_networking.network_management_menu()
+                linux_networking.manage_linux_networking()
             elif os_type == "Windows":
                 windows_networking.network_management_menu()
             else:
                 print("Gestión de redes no disponible para este SO.")
         elif choice == '3':
             if os_type == "Linux":
-                linux_firewall.firewall_management_menu()
+                linux_firewall.manage_linux_firewall()
             elif os_type == "Windows":
                 windows_firewall.firewall_management_menu()
             else:
                 print("Gestión de firewall no disponible para este SO.")
         elif choice == '4':
-            # La gestión de proxy de navegador es más compleja y a menudo manual.
-            # Aquí podríamos ofrecer solo la opción de configuración a nivel de sistema.
             system_proxy.proxy_management_menu(os_type)
         elif choice == '5':
             if os_type == "Linux":
-                linux_resources.system_monitoring_menu()
+                linux_resources.manage_linux_resources()
             elif os_type == "Windows":
                 windows_resources.system_monitoring_menu()
             else:
                 print("Monitorización de recursos no disponible para este SO.")
         elif choice == '0':
-            print("Saliendo del script. ¡Hasta luego!")
+            print("Saliendo del script...")
             break
         else:
             print("Opción no válida. Por favor, selecciona una opción del menú.")

@@ -231,10 +231,3 @@ def manage_linux_users():
             break
         else:
             print("Opción no válida. Intente de nuevo.")
-
-# Para pruebas directas (no se ejecutará si se importa como módulo)
-if __name__ == "__main__":
-    if sys.platform.startswith("linux"):
-        manage_linux_users()
-    else:
-        print("Este script está diseñado para sistemas operativos Linux.")
